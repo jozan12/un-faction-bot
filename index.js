@@ -1,21 +1,24 @@
-const { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes } = require("discord.js");
+const {
+  Client,
+  GatewayIntentBits,
+  SlashCommandBuilder,
+  REST,
+  Routes,
+  PermissionFlagsBits
+} = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
 
-// Read token from Railway environment variable
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const config = { token: process.env.TOKEN };
-
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
-});
 
 // ================= DATABASE =================
 const db = new sqlite3.Database("./database.db");
 
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS factions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE,
-    points INTEGER DEFAULT 0
+    name TEXT PRIMARY KEY,
+    points INTEGER DEFAULT 0,
+    leader TEXT
   )`);
 
   db.run(`CREATE TABLE IF NOT EXISTS users (
@@ -23,60 +26,81 @@ db.serialize(() => {
     faction TEXT,
     last_checkin TEXT
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS wars (
+    faction1 TEXT,
+    faction2 TEXT,
+    active INTEGER
+  )`);
 });
 
-// ================= HELPER FUNCTION =================
-async function createFactionStructure(guild, factionName) {
-  // Create role
-  const role = await guild.roles.create({
-    name: factionName,
-    mentionable: true
-  });
+// ================= FACTION STRUCTURE =================
+async function createFactionStructure(guild, name) {
+  const role = await guild.roles.create({ name, mentionable: true });
 
-  // Create private category
   const category = await guild.channels.create({
-    name: `${factionName.toUpperCase()} FACTION`,
-    type: 4, // Category
+    name: `${name.toUpperCase()} FACTION`,
+    type: 4,
     permissionOverwrites: [
-      {
-        id: guild.roles.everyone,
-        deny: ["ViewChannel"]
-      },
-      {
-        id: role.id,
-        allow: ["ViewChannel"]
-      }
+      { id: guild.roles.everyone, deny: ["ViewChannel"] },
+      { id: role.id, allow: ["ViewChannel"] }
     ]
   });
 
-  // Create private text channel
   await guild.channels.create({
-    name: `${factionName}-chat`,
-    type: 0, // Text channel
+    name: `${name}-chat`,
+    type: 0,
     parent: category.id
   });
+}
 
-  return role;
+async function deleteFactionStructure(guild, name) {
+  const role = guild.roles.cache.find(r => r.name === name);
+  if (role) await role.delete();
+
+  const category = guild.channels.cache.find(
+    c => c.name === `${name.toUpperCase()} FACTION`
+  );
+  if (category) {
+    for (const ch of guild.channels.cache.filter(c => c.parentId === category.id).values()) {
+      await ch.delete();
+    }
+    await category.delete();
+  }
 }
 
 // ================= BOT READY =================
 client.once("ready", async () => {
-  console.log(`✅ Bot logged in as ${client.user.tag}`);
+  console.log(`✅ Logged in as ${client.user.tag}`);
 
   const commands = [
     new SlashCommandBuilder()
       .setName("faction-create")
       .setDescription("Create a faction")
-      .addStringOption(o =>
-        o.setName("name").setDescription("Faction name").setRequired(true)
-      ),
+      .addStringOption(o => o.setName("name").setRequired(true))
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+    new SlashCommandBuilder()
+      .setName("faction-delete")
+      .setDescription("Delete a faction")
+      .addStringOption(o => o.setName("name").setRequired(true))
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     new SlashCommandBuilder()
       .setName("faction-join")
       .setDescription("Join a faction")
-      .addStringOption(o =>
-        o.setName("name").setDescription("Faction name").setRequired(true)
-      ),
+      .addStringOption(o => o.setName("name").setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName("faction-leave")
+      .setDescription("Leave your faction"),
+
+    new SlashCommandBuilder()
+      .setName("faction-leader")
+      .setDescription("Assign faction leader")
+      .addUserOption(o => o.setName("user").setRequired(true))
+      .addStringOption(o => o.setName("faction").setRequired(true))
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     new SlashCommandBuilder()
       .setName("checkin")
@@ -84,90 +108,111 @@ client.once("ready", async () => {
 
     new SlashCommandBuilder()
       .setName("leaderboard")
-      .setDescription("View faction leaderboard")
+      .setDescription("View faction leaderboard"),
+
+    new SlashCommandBuilder()
+      .setName("weekly-reset")
+      .setDescription("Reset faction points weekly")
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+    new SlashCommandBuilder()
+      .setName("war-declare")
+      .setDescription("Declare war on another faction")
+      .addStringOption(o => o.setName("enemy").setRequired(true))
   ].map(c => c.toJSON());
 
   const rest = new REST({ version: "10" }).setToken(config.token);
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
 
-  console.log("✅ Slash commands registered");
+  console.log("✅ Commands registered");
 });
 
 // ================= COMMAND HANDLER =================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-
   const userId = interaction.user.id;
   const today = new Date().toDateString();
 
-  // ---------- CREATE FACTION ----------
+  // CREATE FACTION
   if (interaction.commandName === "faction-create") {
     const name = interaction.options.getString("name");
-    const guild = interaction.guild;
-
     db.run("INSERT INTO factions (name) VALUES (?)", [name], async err => {
-      if (err) {
-        return interaction.reply({ content: "❌ Faction already exists", ephemeral: true });
-      }
-
-      await createFactionStructure(guild, name);
-
-      interaction.reply(`✅ Faction **${name}** created with role and private channels`);
+      if (err) return interaction.reply({ content: "❌ Exists", ephemeral: true });
+      await createFactionStructure(interaction.guild, name);
+      interaction.reply(`✅ Faction **${name}** created`);
     });
   }
 
-  // ---------- JOIN FACTION ----------
+  // DELETE FACTION
+  if (interaction.commandName === "faction-delete") {
+    const name = interaction.options.getString("name");
+    await deleteFactionStructure(interaction.guild, name);
+    db.run("DELETE FROM factions WHERE name = ?", [name]);
+    db.run("UPDATE users SET faction = NULL WHERE faction = ?", [name]);
+    interaction.reply(`🗑️ **${name}** deleted`);
+  }
+
+  // JOIN
   if (interaction.commandName === "faction-join") {
     const name = interaction.options.getString("name");
-    const guild = interaction.guild;
-    const member = interaction.member;
+    const role = interaction.guild.roles.cache.find(r => r.name === name);
+    if (role) await interaction.member.roles.add(role);
+    db.run("INSERT OR REPLACE INTO users VALUES (?, ?, ?)", [userId, name, ""]);
+    interaction.reply(`✅ Joined **${name}**`);
+  }
 
-    db.get("SELECT * FROM factions WHERE name = ?", [name], async (err, row) => {
-      if (!row) {
-        return interaction.reply({ content: "❌ Faction not found", ephemeral: true });
-      }
-
-      const role = guild.roles.cache.find(r => r.name === name);
-      if (role) {
-        await member.roles.add(role);
-      }
-
-      db.run(
-        "INSERT OR REPLACE INTO users (user_id, faction, last_checkin) VALUES (?, ?, ?)",
-        [userId, name, ""]
-      );
-
-      interaction.reply(`✅ You joined **${name}**`);
+  // LEAVE
+  if (interaction.commandName === "faction-leave") {
+    db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
+      if (!u || !u.faction) return interaction.reply("❌ Not in faction");
+      const role = interaction.guild.roles.cache.find(r => r.name === u.faction);
+      if (role) await interaction.member.roles.remove(role);
+      db.run("UPDATE users SET faction = NULL WHERE user_id = ?", [userId]);
+      interaction.reply("✅ You left your faction");
     });
   }
 
-  // ---------- DAILY CHECK-IN ----------
+  // LEADER ASSIGN
+  if (interaction.commandName === "faction-leader") {
+    const user = interaction.options.getUser("user");
+    const faction = interaction.options.getString("faction");
+    db.run("UPDATE factions SET leader = ? WHERE name = ?", [user.id, faction]);
+    interaction.reply(`👑 <@${user.id}> is now leader of **${faction}**`);
+  }
+
+  // CHECK-IN
   if (interaction.commandName === "checkin") {
-    db.get("SELECT * FROM users WHERE user_id = ?", [userId], (err, user) => {
-      if (!user) {
-        return interaction.reply({ content: "❌ You are not in a faction", ephemeral: true });
-      }
-
-      if (user.last_checkin === today) {
-        return interaction.reply({ content: "⏳ You already checked in today", ephemeral: true });
-      }
-
+    db.get("SELECT * FROM users WHERE user_id = ?", [userId], (e, u) => {
+      if (!u || !u.faction) return interaction.reply("❌ No faction");
+      if (u.last_checkin === today) return interaction.reply("⏳ Already done");
       db.run("UPDATE users SET last_checkin = ? WHERE user_id = ?", [today, userId]);
-      db.run("UPDATE factions SET points = points + 10 WHERE name = ?", [user.faction]);
-
-      interaction.reply(`🔥 Check-in successful! **${user.faction}** gains +10 points`);
+      db.run("UPDATE factions SET points = points + 10 WHERE name = ?", [u.faction]);
+      interaction.reply("🔥 +10 points added");
     });
   }
 
-  // ---------- LEADERBOARD ----------
-  if (interaction.commandName === "leaderboard") {
-    db.all("SELECT * FROM factions ORDER BY points DESC", [], (err, rows) => {
-      let msg = "**🏆 Faction Leaderboard**\n\n";
-      rows.forEach((f, i) => {
-        msg += `${i + 1}. **${f.name}** — ${f.points} pts\n`;
-      });
+  // WEEKLY RESET
+  if (interaction.commandName === "weekly-reset") {
+    db.run("UPDATE factions SET points = 0");
+    interaction.reply("♻️ Weekly reset complete");
+  }
 
+  // LEADERBOARD
+  if (interaction.commandName === "leaderboard") {
+    db.all("SELECT * FROM factions ORDER BY points DESC", [], (e, rows) => {
+      let msg = "**🏆 Leaderboard**\n\n";
+      rows.forEach((f, i) => msg += `${i + 1}. ${f.name} — ${f.points}\n`);
       interaction.reply(msg);
+    });
+  }
+
+  // WAR
+  if (interaction.commandName === "war-declare") {
+    const enemy = interaction.options.getString("enemy");
+    db.get("SELECT faction FROM users WHERE user_id = ?", [userId], (e, u) => {
+      if (!u || !u.faction) return interaction.reply("❌ No faction");
+      db.run("INSERT INTO wars VALUES (?, ?, 1)", [u.faction, enemy]);
+      interaction.reply(`⚔️ **${u.faction}** declared war on **${enemy}**`);
     });
   }
 });
