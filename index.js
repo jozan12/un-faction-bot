@@ -33,6 +33,10 @@ db.serialize(() => {
     faction2 TEXT,
     active INTEGER
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS trusted_roles (
+    role_id TEXT PRIMARY KEY
+  )`);
 });
 
 // ================= FACTION STRUCTURE =================
@@ -70,6 +74,20 @@ async function deleteFactionStructure(guild, name) {
   }
 }
 
+// ================= PERMISSION CHECK =================
+async function hasPermission(member) {
+  if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+
+  const memberRoles = member.roles.cache.map(r => r.id);
+  return new Promise(resolve => {
+    db.all("SELECT role_id FROM trusted_roles", [], (err, rows) => {
+      if (err) return resolve(false);
+      const trustedIds = rows.map(r => r.role_id);
+      resolve(memberRoles.some(r => trustedIds.includes(r)));
+    });
+  });
+}
+
 // ================= BOT READY =================
 client.once("clientReady", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
@@ -78,14 +96,12 @@ client.once("clientReady", async () => {
     new SlashCommandBuilder()
       .setName("faction-create")
       .setDescription("Create a faction")
-      .addStringOption(o => o.setName("name").setDescription("Faction name").setRequired(true))
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+      .addStringOption(o => o.setName("name").setDescription("Faction name").setRequired(true)),
 
     new SlashCommandBuilder()
       .setName("faction-delete")
       .setDescription("Delete a faction")
-      .addStringOption(o => o.setName("name").setDescription("Faction name").setRequired(true))
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+      .addStringOption(o => o.setName("name").setDescription("Faction name").setRequired(true)),
 
     new SlashCommandBuilder()
       .setName("faction-join")
@@ -100,8 +116,7 @@ client.once("clientReady", async () => {
       .setName("faction-leader")
       .setDescription("Assign faction leader")
       .addUserOption(o => o.setName("user").setDescription("New leader").setRequired(true))
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true))
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true)),
 
     new SlashCommandBuilder()
       .setName("checkin")
@@ -113,13 +128,22 @@ client.once("clientReady", async () => {
 
     new SlashCommandBuilder()
       .setName("weekly-reset")
-      .setDescription("Reset faction points weekly")
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+      .setDescription("Reset faction points weekly"),
 
     new SlashCommandBuilder()
       .setName("war-declare")
       .setDescription("Declare war on another faction")
       .addStringOption(o => o.setName("enemy").setDescription("Enemy faction").setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName("trust-role")
+      .setDescription("Add a server role to trusted roles")
+      .addRoleOption(o => o.setName("role").setDescription("Role to trust").setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName("untrust-role")
+      .setDescription("Remove a server role from trusted roles")
+      .addRoleOption(o => o.setName("role").setDescription("Role to remove").setRequired(true)),
 
     new SlashCommandBuilder()
       .setName("help")
@@ -140,7 +164,15 @@ client.on("interactionCreate", async interaction => {
   const today = new Date().toDateString();
 
   try {
-    // CREATE FACTION
+
+    // ---------- ADMIN COMMANDS ----------
+    if (["faction-create", "faction-delete", "faction-leader", "weekly-reset"].includes(interaction.commandName)) {
+      if (!(await hasPermission(interaction.member))) {
+        return interaction.reply({ content: "❌ You do not have permission to use this command", ephemeral: true });
+      }
+    }
+
+    // ---------- FACTION CREATE ----------
     if (interaction.commandName === "faction-create") {
       const name = interaction.options.getString("name");
       db.run("INSERT INTO factions (name) VALUES (?)", [name], async err => {
@@ -150,7 +182,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // DELETE FACTION
+    // ---------- FACTION DELETE ----------
     if (interaction.commandName === "faction-delete") {
       const name = interaction.options.getString("name");
       await deleteFactionStructure(interaction.guild, name);
@@ -159,18 +191,13 @@ client.on("interactionCreate", async interaction => {
       interaction.reply(`🗑️ **${name}** deleted`);
     }
 
-    // JOIN
+    // ---------- FACTION JOIN ----------
     if (interaction.commandName === "faction-join") {
       const name = interaction.options.getString("name");
 
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
-        if (u && u.faction === name) {
-          return interaction.reply("❌ You are already in this faction");
-        }
-
-        if (u && u.faction) {
-          return interaction.reply(`❌ You are already in faction **${u.faction}**. Leave it first using /faction-leave`);
-        }
+        if (u && u.faction === name) return interaction.reply("❌ You are already in this faction");
+        if (u && u.faction) return interaction.reply(`❌ You are already in faction **${u.faction}**. Leave it first using /faction-leave`);
 
         const role = interaction.guild.roles.cache.find(r => r.name === name);
         if (!role) return interaction.reply(`❌ Faction **${name}** does not exist`);
@@ -182,7 +209,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // LEAVE
+    // ---------- FACTION LEAVE ----------
     if (interaction.commandName === "faction-leave") {
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
         if (!u || !u.faction) return interaction.reply("❌ Not in a faction");
@@ -193,7 +220,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // LEADER ASSIGN
+    // ---------- FACTION LEADER ----------
     if (interaction.commandName === "faction-leader") {
       const user = interaction.options.getUser("user");
       const faction = interaction.options.getString("faction");
@@ -201,7 +228,7 @@ client.on("interactionCreate", async interaction => {
       interaction.reply(`👑 <@${user.id}> is now leader of **${faction}**`);
     }
 
-    // CHECK-IN
+    // ---------- CHECK-IN ----------
     if (interaction.commandName === "checkin") {
       db.get("SELECT * FROM users WHERE user_id = ?", [userId], (e, u) => {
         if (!u || !u.faction) return interaction.reply("❌ You are not in a faction");
@@ -212,13 +239,13 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // WEEKLY RESET
+    // ---------- WEEKLY RESET ----------
     if (interaction.commandName === "weekly-reset") {
       db.run("UPDATE factions SET points = 0");
       interaction.reply("♻️ Weekly reset complete");
     }
 
-    // LEADERBOARD
+    // ---------- LEADERBOARD ----------
     if (interaction.commandName === "leaderboard") {
       db.all("SELECT * FROM factions ORDER BY points DESC", [], (e, rows) => {
         let msg = "**🏆 Faction Leaderboard**\n\n";
@@ -227,7 +254,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // WAR
+    // ---------- WAR ----------
     if (interaction.commandName === "war-declare") {
       const enemy = interaction.options.getString("enemy");
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], (e, u) => {
@@ -237,20 +264,42 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // HELP
+    // ---------- TRUST ROLE ----------
+    if (interaction.commandName === "trust-role") {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply("❌ Only admins can trust roles");
+      const role = interaction.options.getRole("role");
+      db.run("INSERT OR IGNORE INTO trusted_roles (role_id) VALUES (?)", [role.id], err => {
+        if (err) return interaction.reply("❌ Error adding trusted role");
+        interaction.reply(`✅ Role **${role.name}** can now use all admin commands`);
+      });
+    }
+
+    // ---------- UNTRUST ROLE ----------
+    if (interaction.commandName === "untrust-role") {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply("❌ Only admins can untrust roles");
+      const role = interaction.options.getRole("role");
+      db.run("DELETE FROM trusted_roles WHERE role_id = ?", [role.id], err => {
+        if (err) return interaction.reply("❌ Error removing trusted role");
+        interaction.reply(`✅ Role **${role.name}** can no longer use admin commands`);
+      });
+    }
+
+    // ---------- HELP ----------
     if (interaction.commandName === "help") {
       const helpMessage = `
 **📜 Faction Bot Commands**
 
-**/faction-create [name]** – Create a new faction (Admin only)  
-**/faction-delete [name]** – Delete a faction (Admin only)  
+**/faction-create [name]** – Create a new faction (Admins & trusted roles)  
+**/faction-delete [name]** – Delete a faction (Admins & trusted roles)  
 **/faction-join [name]** – Join a faction (must leave old faction first)  
 **/faction-leave** – Leave your current faction  
-**/faction-leader [user] [faction]** – Assign a faction leader (Admin only)  
+**/faction-leader [user] [faction]** – Assign a faction leader (Admins & trusted roles)  
 **/checkin** – Daily faction check-in to earn points  
 **/leaderboard** – View the faction leaderboard  
-**/weekly-reset** – Reset all faction points (Admin only)  
+**/weekly-reset** – Reset all faction points (Admins & trusted roles)  
 **/war-declare [enemy]** – Declare war on another faction  
+**/trust-role [role]** – Allow a role to use all admin commands (Admin only)  
+**/untrust-role [role]** – Remove a role from admin privileges (Admin only)  
 **/help** – Show this help message
       `;
       interaction.reply({ content: helpMessage, ephemeral: true });
