@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
-const config = require("./config.json");
+const config = { token: process.env.TOKEN };
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
@@ -104,3 +104,4 @@ client.on("interactionCreate", async interaction => {
 });
 
 client.login(config.token);
+
