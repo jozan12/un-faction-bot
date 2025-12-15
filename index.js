@@ -119,7 +119,11 @@ client.once("clientReady", async () => {
     new SlashCommandBuilder()
       .setName("war-declare")
       .setDescription("Declare war on another faction")
-      .addStringOption(o => o.setName("enemy").setDescription("Enemy faction").setRequired(true))
+      .addStringOption(o => o.setName("enemy").setDescription("Enemy faction").setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName("help")
+      .setDescription("Show a list of all commands and their uses")
   ].map(c => c.toJSON());
 
   const rest = new REST({ version: "10" }).setToken(config.token);
@@ -165,17 +169,13 @@ client.on("interactionCreate", async interaction => {
         }
 
         if (u && u.faction) {
-          // User is already in another faction
           return interaction.reply(`❌ You are already in faction **${u.faction}**. Leave it first using /faction-leave`);
         }
 
-        // Add new faction role
         const role = interaction.guild.roles.cache.find(r => r.name === name);
         if (!role) return interaction.reply(`❌ Faction **${name}** does not exist`);
 
         await interaction.member.roles.add(role);
-
-        // Update database
         db.run("INSERT OR REPLACE INTO users VALUES (?, ?, ?)", [userId, name, u ? u.last_checkin : ""]);
 
         interaction.reply(`✅ Joined **${name}**`);
@@ -236,6 +236,26 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`⚔️ **${u.faction}** declared war on **${enemy}**`);
       });
     }
+
+    // HELP
+    if (interaction.commandName === "help") {
+      const helpMessage = `
+**📜 Faction Bot Commands**
+
+**/faction-create [name]** – Create a new faction (Admin only)  
+**/faction-delete [name]** – Delete a faction (Admin only)  
+**/faction-join [name]** – Join a faction (must leave old faction first)  
+**/faction-leave** – Leave your current faction  
+**/faction-leader [user] [faction]** – Assign a faction leader (Admin only)  
+**/checkin** – Daily faction check-in to earn points  
+**/leaderboard** – View the faction leaderboard  
+**/weekly-reset** – Reset all faction points (Admin only)  
+**/war-declare [enemy]** – Declare war on another faction  
+**/help** – Show this help message
+      `;
+      interaction.reply({ content: helpMessage, ephemeral: true });
+    }
+
   } catch (err) {
     console.error("Error handling interaction:", err);
     interaction.reply({ content: "❌ Something went wrong", ephemeral: true });
