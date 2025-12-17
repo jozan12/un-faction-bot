@@ -83,9 +83,25 @@ async function isTrusted(interaction) {
   return interaction.member.roles.cache.some(r => roles.some(tr => tr.role_id === r.id));
 }
 
+// ================= SYNC EXISTING FACTIONS =================
+async function syncFactionsWithDB(guild) {
+  guild.roles.cache.forEach(role => {
+    if (role.name === "@everyone") return;
+    const category = guild.channels.cache.find(c => c.name === `${role.name.toUpperCase()} FACTION`);
+    if (!category) return;
+    db.run("INSERT OR IGNORE INTO factions (name, points) VALUES (?, ?)", [role.name, 0], err => {
+      if (err) console.error("Error syncing faction:", role.name, err);
+    });
+  });
+  console.log("✅ Faction roles synced with database");
+}
+
 // ================= BOT READY =================
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+
+  const guild = client.guilds.cache.first(); // Your main server
+  await syncFactionsWithDB(guild);
 
   const commands = [
     new SlashCommandBuilder()
@@ -138,7 +154,6 @@ client.once("clientReady", async () => {
       .setName("help")
       .setDescription("Show a list of all commands and their uses"),
 
-    // ===== NEW COMMANDS =====
     new SlashCommandBuilder()
       .setName("faction-add-member")
       .setDescription("Add a member to a faction")
@@ -181,7 +196,7 @@ client.on("interactionCreate", async interaction => {
   const today = new Date().toDateString();
 
   try {
-    // ==== FACTION CREATE ====
+    // ===== CORE COMMANDS =====
     if (interaction.commandName === "faction-create") {
       const name = interaction.options.getString("name");
       db.run("INSERT INTO factions (name) VALUES (?)", [name], async err => {
@@ -190,8 +205,6 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`✅ Faction **${name}** created`);
       });
     }
-
-    // ==== FACTION DELETE ====
     else if (interaction.commandName === "faction-delete") {
       const name = interaction.options.getString("name");
       await deleteFactionStructure(interaction.guild, name);
@@ -199,8 +212,6 @@ client.on("interactionCreate", async interaction => {
       db.run("UPDATE users SET faction = NULL WHERE faction = ?", [name]);
       interaction.reply(`🗑️ **${name}** deleted`);
     }
-
-    // ==== FACTION JOIN ====
     else if (interaction.commandName === "faction-join") {
       const name = interaction.options.getString("name");
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
@@ -213,8 +224,6 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`✅ Joined **${name}**`);
       });
     }
-
-    // ==== FACTION LEAVE ====
     else if (interaction.commandName === "faction-leave") {
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
         if (!u || !u.faction) return interaction.reply("❌ Not in a faction");
@@ -224,16 +233,12 @@ client.on("interactionCreate", async interaction => {
         interaction.reply("✅ Left your faction");
       });
     }
-
-    // ==== FACTION LEADER ====
     else if (interaction.commandName === "faction-leader") {
       const user = interaction.options.getUser("user");
       const faction = interaction.options.getString("faction");
       db.run("UPDATE factions SET leader = ? WHERE name = ?", [user.id, faction]);
       interaction.reply(`👑 <@${user.id}> is now leader of **${faction}**`);
     }
-
-    // ==== CHECKIN ====
     else if (interaction.commandName === "checkin") {
       db.get("SELECT * FROM users WHERE user_id = ?", [userId], (e, u) => {
         if (!u || !u.faction) return interaction.reply("❌ Not in a faction");
@@ -243,14 +248,10 @@ client.on("interactionCreate", async interaction => {
         interaction.reply("🔥 +10 points added to your faction");
       });
     }
-
-    // ==== WEEKLY RESET ====
     else if (interaction.commandName === "weekly-reset") {
       db.run("UPDATE factions SET points = 0");
       interaction.reply("♻️ Weekly reset complete");
     }
-
-    // ==== LEADERBOARD ====
     else if (interaction.commandName === "leaderboard") {
       db.all("SELECT * FROM factions ORDER BY points DESC", [], (e, rows) => {
         let msg = "**🏆 Faction Leaderboard**\n\n";
@@ -258,8 +259,6 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(msg);
       });
     }
-
-    // ==== WAR ====
     else if (interaction.commandName === "war-declare") {
       const enemy = interaction.options.getString("enemy");
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], (e, u) => {
@@ -268,8 +267,6 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`⚔️ **${u.faction}** declared war on **${enemy}**`);
       });
     }
-
-    // ==== HELP ====
     else if (interaction.commandName === "help") {
       const helpMessage = `
 **📜 Faction Bot Commands**
@@ -293,7 +290,7 @@ client.on("interactionCreate", async interaction => {
       interaction.reply({ content: helpMessage, ephemeral: true });
     }
 
-    // ==== ADD MEMBER ====
+    // ===== ADMIN/TRUSTED COMMANDS =====
     else if (interaction.commandName === "faction-add-member") {
       if (!(await isTrusted(interaction))) return interaction.reply("❌ You cannot use this command");
       const user = interaction.options.getUser("user");
@@ -308,8 +305,6 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`✅ Added <@${user.id}> to **${faction}**`);
       });
     }
-
-    // ==== REMOVE MEMBER ====
     else if (interaction.commandName === "faction-remove-member") {
       if (!(await isTrusted(interaction))) return interaction.reply("❌ You cannot use this command");
       const user = interaction.options.getUser("user");
@@ -322,8 +317,6 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`🗑️ Removed <@${user.id}> from **${faction}**`);
       });
     }
-
-    // ==== FACTION INFO ====
     else if (interaction.commandName === "faction-info") {
       const faction = interaction.options.getString("faction");
       db.get("SELECT * FROM factions WHERE name = ?", [faction], (e, f) => {
@@ -338,8 +331,6 @@ client.on("interactionCreate", async interaction => {
         });
       });
     }
-
-    // ==== FACTION MEMBERS ====
     else if (interaction.commandName === "faction-members") {
       const faction = interaction.options.getString("faction");
       db.all("SELECT user_id FROM users WHERE faction = ?", [faction], (err, members) => {
@@ -347,8 +338,6 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`**Members of ${faction}:**\n${members.map(m => `<@${m.user_id}>`).join("\n")}`);
       });
     }
-
-    // ==== TRUST ROLE ====
     else if (interaction.commandName === "trust-role") {
       const role = interaction.options.getRole("role");
       db.run("INSERT OR REPLACE INTO trusted_roles VALUES (?)", [role.id]);
