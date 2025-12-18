@@ -188,6 +188,33 @@ client.once("ready", async () => {
   console.log("✅ Commands registered");
 });
 
+// ================= AUTO REMINDER =================
+setInterval(() => {
+  const today = new Date().toDateString();
+  db.all("SELECT * FROM users WHERE last_checkin != ?", [today], (err, rows) => {
+    if (!rows) return;
+    rows.forEach(user => {
+      client.guilds.cache.forEach(guild => {
+        const member = guild.members.cache.get(user.user_id);
+        if (member) {
+          member.send("⏰ Reminder: You haven't checked in to your faction today!");
+        }
+      });
+    });
+  });
+}, 1000 * 60 * 60); // every hour
+
+ // -------------- CHECK-IN STATUS --------------
+    if (interaction.commandName === "checkin-status") {
+      const name = interaction.options.getString("name");
+      db.all("SELECT * FROM users WHERE faction = ?", [name], (e, members) => {
+        if (!members.length) return interaction.reply("❌ No members in this faction");
+        const checkedIn = members.filter(m => m.last_checkin === today).map(m => `<@${m.user_id}>`).join(", ") || "None";
+        const notCheckedIn = members.filter(m => m.last_checkin !== today).map(m => `<@${m.user_id}>`).join(", ") || "None";
+        interaction.reply(`**Checked in:** ${checkedIn}\n**Not checked in:** ${notCheckedIn}`);
+      });
+    }
+
 // ================= COMMAND HANDLER =================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
@@ -352,5 +379,6 @@ client.on("interactionCreate", async interaction => {
 
 // ================= LOGIN =================
 client.login(config.token);
+
 
 
