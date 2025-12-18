@@ -137,6 +137,11 @@ client.once("ready", async () => {
       .setDescription("Daily faction check-in"),
 
     new SlashCommandBuilder()
+      .setName("checkin-status")
+      .setDescription("Check which members have checked in today")
+      .addStringOption(o => o.setName("name").setDescription("Faction name").setRequired(true)),
+
+    new SlashCommandBuilder()
       .setName("leaderboard")
       .setDescription("View faction leaderboard"),
 
@@ -204,17 +209,6 @@ setInterval(() => {
   });
 }, 1000 * 60 * 60); // every hour
 
- // -------------- CHECK-IN STATUS --------------
-    if (interaction.commandName === "checkin-status") {
-      const name = interaction.options.getString("name");
-      db.all("SELECT * FROM users WHERE faction = ?", [name], (e, members) => {
-        if (!members.length) return interaction.reply("❌ No members in this faction");
-        const checkedIn = members.filter(m => m.last_checkin === today).map(m => `<@${m.user_id}>`).join(", ") || "None";
-        const notCheckedIn = members.filter(m => m.last_checkin !== today).map(m => `<@${m.user_id}>`).join(", ") || "None";
-        interaction.reply(`**Checked in:** ${checkedIn}\n**Not checked in:** ${notCheckedIn}`);
-      });
-    }
-
 // ================= COMMAND HANDLER =================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
@@ -275,6 +269,15 @@ client.on("interactionCreate", async interaction => {
         interaction.reply("🔥 +10 points added to your faction");
       });
     }
+    else if (interaction.commandName === "checkin-status") {
+      const name = interaction.options.getString("name");
+      db.all("SELECT * FROM users WHERE faction = ?", [name], (e, members) => {
+        if (!members || members.length === 0) return interaction.reply("❌ No members in this faction");
+        const checkedIn = members.filter(m => m.last_checkin === today).map(m => `<@${m.user_id}>`).join(", ") || "None";
+        const notCheckedIn = members.filter(m => m.last_checkin !== today).map(m => `<@${m.user_id}>`).join(", ") || "None";
+        interaction.reply(`**Checked in:** ${checkedIn}\n**Not checked in:** ${notCheckedIn}`);
+      });
+    }
     else if (interaction.commandName === "weekly-reset") {
       db.run("UPDATE factions SET points = 0");
       interaction.reply("♻️ Weekly reset complete");
@@ -304,6 +307,7 @@ client.on("interactionCreate", async interaction => {
 **/faction-leave** – Leave your faction  
 **/faction-leader [user] [faction]** – Assign a faction leader (Admin only)  
 **/checkin** – Daily faction check-in  
+**/checkin-status [name]** – Check faction members' check-in status  
 **/leaderboard** – View faction leaderboard  
 **/weekly-reset** – Reset all faction points (Admin only)  
 **/war-declare [enemy]** – Declare war  
@@ -373,12 +377,13 @@ client.on("interactionCreate", async interaction => {
 
   } catch (err) {
     console.error("Error handling interaction:", err);
-    interaction.reply({ content: "❌ Something went wrong", ephemeral: true });
+    if (interaction.replied || interaction.deferred) {
+      interaction.followUp({ content: "❌ Something went wrong", ephemeral: true });
+    } else {
+      interaction.reply({ content: "❌ Something went wrong", ephemeral: true });
+    }
   }
 });
 
 // ================= LOGIN =================
 client.login(config.token);
-
-
-
