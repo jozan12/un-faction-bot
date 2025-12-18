@@ -39,9 +39,11 @@ db.serialize(() => {
 
 // ================= FACTION STRUCTURE =================
 async function createFactionStructure(guild, name) {
+  // Check if role exists
   let role = guild.roles.cache.find(r => r.name === name);
   if (!role) role = await guild.roles.create({ name, mentionable: true });
 
+  // Check if category exists
   let category = guild.channels.cache.find(c => c.name === `${name.toUpperCase()} FACTION`);
   if (!category) {
     category = await guild.channels.create({
@@ -54,6 +56,7 @@ async function createFactionStructure(guild, name) {
     });
   }
 
+  // Create text channel if missing
   if (!guild.channels.cache.find(c => c.name === `${name}-chat` && c.parentId === category.id)) {
     await guild.channels.create({
       name: `${name}-chat`,
@@ -153,8 +156,7 @@ setInterval(() => {
   db.all("SELECT * FROM users WHERE last_checkin != ?", [today], (err, rows) => {
     if (!rows) return;
     rows.forEach(user => {
-      const guilds = client.guilds.cache;
-      guilds.forEach(guild => {
+      client.guilds.cache.forEach(guild => {
         const member = guild.members.cache.get(user.user_id);
         if (member) {
           member.send("⏰ Reminder: You haven't checked in to your faction today!");
@@ -173,21 +175,23 @@ client.on("interactionCreate", async interaction => {
   const member = interaction.member;
 
   try {
-    // ADMIN / TRUSTED CHECK
     const adminOrTrusted = isAdminOrTrusted(member);
 
-    // FACTION CREATE
+    // -------------- FACTION CREATE --------------
     if (interaction.commandName === "faction-create") {
       if (!adminOrTrusted) return interaction.reply("❌ You do not have permission");
       const name = interaction.options.getString("name");
-      db.run("INSERT INTO factions (name) VALUES (?)", [name], async err => {
-        if (err) return interaction.reply("❌ Faction already exists");
+
+      db.get("SELECT * FROM factions WHERE name = ?", [name], async (err, row) => {
+        if (row) return interaction.reply("❌ Faction already exists");
+
+        db.run("INSERT INTO factions (name) VALUES (?)", [name]);
         await createFactionStructure(interaction.guild, name);
         interaction.reply(`✅ Faction **${name}** created`);
       });
     }
 
-    // FACTION DELETE
+    // -------------- FACTION DELETE --------------
     if (interaction.commandName === "faction-delete") {
       if (!adminOrTrusted) return interaction.reply("❌ You do not have permission");
       const name = interaction.options.getString("name");
@@ -197,7 +201,7 @@ client.on("interactionCreate", async interaction => {
       interaction.reply(`🗑️ **${name}** deleted`);
     }
 
-    // FACTION JOIN
+    // -------------- FACTION JOIN --------------
     if (interaction.commandName === "faction-join") {
       const name = interaction.options.getString("name");
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
@@ -211,7 +215,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // FACTION LEAVE
+    // -------------- FACTION LEAVE --------------
     if (interaction.commandName === "faction-leave") {
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
         if (!u || !u.faction) return interaction.reply("❌ Not in a faction");
@@ -222,7 +226,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // FACTION LEADER
+    // -------------- FACTION LEADER --------------
     if (interaction.commandName === "faction-leader") {
       if (!adminOrTrusted) return interaction.reply("❌ You do not have permission");
       const user = interaction.options.getUser("user");
@@ -231,7 +235,7 @@ client.on("interactionCreate", async interaction => {
       interaction.reply(`👑 <@${user.id}> is now leader of **${faction}**`);
     }
 
-    // CHECKIN
+    // -------------- CHECK-IN --------------
     if (interaction.commandName === "checkin") {
       db.get("SELECT * FROM users WHERE user_id = ?", [userId], (e, u) => {
         if (!u || !u.faction) return interaction.reply("❌ Not in a faction");
@@ -242,14 +246,14 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // WEEKLY RESET
+    // -------------- WEEKLY RESET --------------
     if (interaction.commandName === "weekly-reset") {
       if (!adminOrTrusted) return interaction.reply("❌ You do not have permission");
       db.run("UPDATE factions SET points = 0");
       interaction.reply("♻️ Weekly reset complete");
     }
 
-    // LEADERBOARD
+    // -------------- LEADERBOARD --------------
     if (interaction.commandName === "leaderboard") {
       db.all("SELECT * FROM factions ORDER BY points DESC", [], (e, rows) => {
         let msg = "**🏆 Faction Leaderboard**\n\n";
@@ -258,7 +262,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // WAR DECLARE
+    // -------------- WAR DECLARE --------------
     if (interaction.commandName === "war-declare") {
       const enemy = interaction.options.getString("enemy");
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], (e, u) => {
@@ -268,7 +272,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // FACTION INFO
+    // -------------- FACTION INFO --------------
     if (interaction.commandName === "faction-info") {
       const name = interaction.options.getString("name");
       db.get("SELECT * FROM factions WHERE name = ?", [name], (e, f) => {
@@ -281,7 +285,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // FACTION MEMBERS
+    // -------------- FACTION MEMBERS --------------
     if (interaction.commandName === "faction-members") {
       const name = interaction.options.getString("name");
       db.all("SELECT user_id FROM users WHERE faction = ?", [name], (e, members) => {
@@ -291,7 +295,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // CHECKIN STATUS
+    // -------------- CHECK-IN STATUS --------------
     if (interaction.commandName === "checkin-status") {
       const name = interaction.options.getString("name");
       db.all("SELECT * FROM users WHERE faction = ?", [name], (e, members) => {
@@ -302,7 +306,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // ADD TRUSTED ROLE
+    // -------------- ADD TRUSTED ROLE --------------
     if (interaction.commandName === "add-trusted-role") {
       if (!member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply("❌ Admin only");
       const role = interaction.options.getRole("role");
@@ -310,7 +314,7 @@ client.on("interactionCreate", async interaction => {
       interaction.reply(`✅ Role **${role.name}** added as trusted`);
     }
 
-    // REMOVE TRUSTED ROLE
+    // -------------- REMOVE TRUSTED ROLE --------------
     if (interaction.commandName === "remove-trusted-role") {
       if (!member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply("❌ Admin only");
       const role = interaction.options.getRole("role");
@@ -318,7 +322,7 @@ client.on("interactionCreate", async interaction => {
       interaction.reply(`✅ Role **${role.name}** removed from trusted`);
     }
 
-    // HELP
+    // -------------- HELP --------------
     if (interaction.commandName === "help") {
       const helpMessage = `
 **📜 Faction Bot Commands**
