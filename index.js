@@ -9,7 +9,12 @@ const {
 const sqlite3 = require("sqlite3").verbose();
 
 // ================= CONFIG =================
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ]
+});
 const config = { token: process.env.TOKEN };
 
 // ================= DATABASE =================
@@ -137,11 +142,6 @@ client.once("ready", async () => {
       .setDescription("Daily faction check-in"),
 
     new SlashCommandBuilder()
-      .setName("checkin-status")
-      .setDescription("Check which members have checked in today")
-      .addStringOption(o => o.setName("name").setDescription("Faction name").setRequired(true)),
-
-    new SlashCommandBuilder()
       .setName("leaderboard")
       .setDescription("View faction leaderboard"),
 
@@ -192,22 +192,31 @@ client.once("ready", async () => {
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
   console.log("✅ Commands registered");
 });
-
-// ================= AUTO REMINDER =================
-setInterval(() => {
-  const today = new Date().toDateString();
-  db.all("SELECT * FROM users WHERE last_checkin != ?", [today], (err, rows) => {
-    if (!rows) return;
-    rows.forEach(user => {
-      client.guilds.cache.forEach(guild => {
-        const member = guild.members.cache.get(user.user_id);
-        if (member) {
-          member.send("⏰ Reminder: You haven't checked in to your faction today!");
-        }
-      });
-    });
-  });
-}, 1000 * 60 * 60); // every hour
+,
+    new SlashCommandBuilder()
+      .setName("urgentdm")
+      .setDescription("Send an urgent UN message by DM")
+      .addStringOption(o =>
+        o.setName("subject")
+          .setDescription("Message subject")
+          .setRequired(true)
+      )
+      .addStringOption(o =>
+        o.setName("ministry")
+          .setDescription("Which UN ministry is sending this")
+          .setRequired(true)
+      )
+      .addStringOption(o =>
+        o.setName("message")
+          .setDescription("The urgent message content")
+          .setRequired(true)
+      )
+      .addRoleOption(o =>
+        o.setName("role")
+          .setDescription("Send only to a specific role (optional)")
+          .setRequired(false)
+      )
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 
 // ================= COMMAND HANDLER =================
 client.on("interactionCreate", async interaction => {
@@ -269,15 +278,6 @@ client.on("interactionCreate", async interaction => {
         interaction.reply("🔥 +10 points added to your faction");
       });
     }
-    else if (interaction.commandName === "checkin-status") {
-      const name = interaction.options.getString("name");
-      db.all("SELECT * FROM users WHERE faction = ?", [name], (e, members) => {
-        if (!members || members.length === 0) return interaction.reply("❌ No members in this faction");
-        const checkedIn = members.filter(m => m.last_checkin === today).map(m => `<@${m.user_id}>`).join(", ") || "None";
-        const notCheckedIn = members.filter(m => m.last_checkin !== today).map(m => `<@${m.user_id}>`).join(", ") || "None";
-        interaction.reply(`**Checked in:** ${checkedIn}\n**Not checked in:** ${notCheckedIn}`);
-      });
-    }
     else if (interaction.commandName === "weekly-reset") {
       db.run("UPDATE factions SET points = 0");
       interaction.reply("♻️ Weekly reset complete");
@@ -307,7 +307,6 @@ client.on("interactionCreate", async interaction => {
 **/faction-leave** – Leave your faction  
 **/faction-leader [user] [faction]** – Assign a faction leader (Admin only)  
 **/checkin** – Daily faction check-in  
-**/checkin-status [name]** – Check faction members' check-in status  
 **/leaderboard** – View faction leaderboard  
 **/weekly-reset** – Reset all faction points (Admin only)  
 **/war-declare [enemy]** – Declare war  
@@ -374,16 +373,69 @@ client.on("interactionCreate", async interaction => {
       db.run("INSERT OR REPLACE INTO trusted_roles VALUES (?)", [role.id]);
       interaction.reply(`✅ Role **${role.name}** is now trusted`);
     }
+else if (interaction.commandName === "urgentdm") {
+      if (!(await isTrusted(interaction))) {
+        return interaction.reply({
+          content: "❌ You are not allowed to send urgent UN messages.",
+          ephemeral: true
+        });
+      }
+
+      const subject = interaction.options.getString("subject");
+      const ministry = interaction.options.getString("ministry");
+      const message = interaction.options.getString("message");
+      const role = interaction.options.getRole("role");
+
+      await interaction.reply({
+        content: "📨 Sending urgent messages...",
+        ephemeral: true
+      });
+
+      const embed = {
+        color: 0xff0000,
+        title: "📢 URGENT NOTICE",
+        fields: [
+          { name: "Subject", value: subject },
+          { name: "Ministry", value: ministry },
+          { name: "Message", value: message }
+        ],
+        footer: {
+          text: "Union of Nations (UN) • Official Communication"
+        }
+      };
+
+      let sent = 0;
+      let failed = 0;
+
+      const members = await interaction.guild.members.fetch();
+
+      for (const member of members.values()) {
+        if (member.user.bot) continue;
+        if (role && !member.roles.cache.has(role.id)) continue;
+
+        try {
+          await member.send({ embeds: [embed] });
+          sent++;
+        } catch {
+          failed++;
+        }
+      }
+
+      await interaction.followUp({
+        content: `✅ Done.\n📨 Sent: ${sent}\n❌ Failed: ${failed}`,
+        ephemeral: true
+      });
+    }
 
   } catch (err) {
     console.error("Error handling interaction:", err);
-    if (interaction.replied || interaction.deferred) {
-      interaction.followUp({ content: "❌ Something went wrong", ephemeral: true });
-    } else {
-      interaction.reply({ content: "❌ Something went wrong", ephemeral: true });
-    }
+    interaction.reply({ content: "❌ Something went wrong", ephemeral: true });
   }
 });
 
 // ================= LOGIN =================
 client.login(config.token);
+
+
+
+    
