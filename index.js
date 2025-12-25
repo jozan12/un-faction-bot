@@ -209,6 +209,25 @@ new SlashCommandBuilder()
       .setDescription("Send only to a specific role (optional)")
       .setRequired(false)
   )
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+new SlashCommandBuilder()
+  .setName("dm")
+  .setDescription("Send a DM to a user or a role")
+  .addStringOption(o =>
+    o.setName("message")
+      .setDescription("Message content")
+      .setRequired(true)
+  )
+  .addUserOption(o =>
+    o.setName("user")
+      .setDescription("Send to one person")
+      .setRequired(false)
+  )
+  .addRoleOption(o =>
+    o.setName("role")
+      .setDescription("Send to a role")
+      .setRequired(false)
+  )
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   ].map(c => c.toJSON());
 
@@ -372,6 +391,60 @@ client.on("interactionCreate", async interaction => {
       db.run("INSERT OR REPLACE INTO trusted_roles VALUES (?)", [role.id]);
       interaction.reply(`✅ Role **${role.name}** is now trusted`);
     }
+else if (interaction.commandName === "dm") {
+  const message = interaction.options.getString("message");
+  const user = interaction.options.getUser("user");
+  const role = interaction.options.getRole("role");
+
+  // Make sure user OR role is selected
+  if (!user && !role) {
+    return interaction.reply({
+      content: "❌ You must select **either a user or a role**.",
+      ephemeral: true
+    });
+  }
+
+  if (user && role) {
+    return interaction.reply({
+      content: "❌ Choose **only one**: user OR role.",
+      ephemeral: true
+    });
+  }
+
+  let sent = 0;
+
+  try {
+    if (user) {
+      await user.send(message);
+      sent = 1;
+    }
+
+    if (role) {
+      const members = await interaction.guild.members.fetch();
+
+      for (const member of members.values()) {
+        if (member.roles.cache.has(role.id) && !member.user.bot) {
+          try {
+            await member.user.send(message);
+            sent++;
+          } catch {}
+        }
+      }
+    }
+
+    return interaction.reply({
+      content: `✅ DM sent to **${sent}** recipient(s).`,
+      ephemeral: true
+    });
+
+  } catch (err) {
+    console.error(err);
+    return interaction.reply({
+      content: "❌ Failed to send DM(s).",
+      ephemeral: true
+    });
+  }
+}
 else if (interaction.commandName === "urgentdm") {
       if (!(await isTrusted(interaction))) {
         return interaction.reply({
