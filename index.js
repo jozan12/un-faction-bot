@@ -185,38 +185,37 @@ client.once("ready", async () => {
       .setName("trust-role")
       .setDescription("Add a role that can use all commands")
       .addRoleOption(o => o.setName("role").setDescription("Role to trust").setRequired(true))
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+new SlashCommandBuilder()
+  .setName("urgentdm")
+  .setDescription("Send an urgent UN message by DM")
+  .addStringOption(o =>
+    o.setName("subject")
+      .setDescription("Message subject")
+      .setRequired(true)
+  )
+  .addStringOption(o =>
+    o.setName("ministry")
+      .setDescription("Which UN ministry is sending this")
+      .setRequired(true)
+  )
+  .addStringOption(o =>
+    o.setName("message")
+      .setDescription("The urgent message content")
+      .setRequired(true)
+  )
+  .addRoleOption(o =>
+    o.setName("role")
+      .setDescription("Send only to a specific role (optional)")
+      .setRequired(false)
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   ].map(c => c.toJSON());
 
   const rest = new REST({ version: "10" }).setToken(config.token);
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
   console.log("✅ Commands registered");
 });
-,
-    new SlashCommandBuilder()
-      .setName("urgentdm")
-      .setDescription("Send an urgent UN message by DM")
-      .addStringOption(o =>
-        o.setName("subject")
-          .setDescription("Message subject")
-          .setRequired(true)
-      )
-      .addStringOption(o =>
-        o.setName("ministry")
-          .setDescription("Which UN ministry is sending this")
-          .setRequired(true)
-      )
-      .addStringOption(o =>
-        o.setName("message")
-          .setDescription("The urgent message content")
-          .setRequired(true)
-      )
-      .addRoleOption(o =>
-        o.setName("role")
-          .setDescription("Send only to a specific role (optional)")
-          .setRequired(false)
-      )
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 
 // ================= COMMAND HANDLER =================
 client.on("interactionCreate", async interaction => {
@@ -438,4 +437,4 @@ client.login(config.token);
 
 
 
-    
+
