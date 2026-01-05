@@ -38,6 +38,29 @@ db.serialize(() => {
     faction2 TEXT,
     active INTEGER
   )`);
+  db.run(`
+CREATE TABLE IF NOT EXISTS warnings (
+  user_id TEXT,
+  admin_id TEXT,
+  reason TEXT,
+  date TEXT
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS strikes (
+  user_id TEXT,
+  admin_id TEXT,
+  reason TEXT,
+  date TEXT
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS notes (
+  user_id TEXT,
+  admin_id TEXT,
+  note TEXT,
+  date TEXT
+)`);
 
   db.run(`CREATE TABLE IF NOT EXISTS trusted_roles (
     role_id TEXT PRIMARY KEY
@@ -229,6 +252,48 @@ new SlashCommandBuilder()
       .setRequired(false)
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    new SlashCommandBuilder()
+  .setName("warn")
+  .setDescription("Warn a member (DM sent)")
+  .addUserOption(o =>
+    o.setName("user")
+      .setDescription("User to warn")
+      .setRequired(true)
+  )
+  .addStringOption(o =>
+    o.setName("reason")
+      .setDescription("Reason for warning")
+      .setRequired(true)
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+new SlashCommandBuilder()
+  .setName("strike")
+  .setDescription("Issue a strike to a member")
+  .addUserOption(o =>
+    o.setName("user")
+      .setDescription("User to strike")
+      .setRequired(true)
+  )
+  .addStringOption(o =>
+    o.setName("reason")
+      .setDescription("Reason for strike")
+      .setRequired(true)
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+new SlashCommandBuilder()
+  .setName("notes")
+  .setDescription("Add or view private notes on a member")
+  .addUserOption(o =>
+    o.setName("user")
+      .setDescription("Target user")
+      .setRequired(true)
+  )
+  .addStringOption(o =>
+    o.setName("note")
+      .setDescription("Add a new note (leave empty to view)")
+      .setRequired(false)
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   ].map(c => c.toJSON());
 
   const rest = new REST({ version: "10" }).setToken(config.token);
@@ -507,6 +572,7 @@ else if (interaction.commandName === "urgentdm") {
 
 // ================= LOGIN =================
 client.login(config.token);
+
 
 
 
