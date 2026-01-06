@@ -39,6 +39,29 @@ db.serialize(() => {
     active INTEGER
   )`);
 
+db.run(`CREATE TABLE IF NOT EXISTS resolutions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT,
+    description TEXT,
+    creator_id TEXT,
+    status TEXT DEFAULT 'Pending',
+    veto_role_id TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)`);
+
+db.run(`CREATE TABLE IF NOT EXISTS resolution_votes (
+    resolution_id INTEGER,
+    user_id TEXT,
+    vote TEXT, -- 'Yes' or 'No'
+    weight INTEGER,
+    PRIMARY KEY(resolution_id, user_id)
+)`);
+
+db.run(`CREATE TABLE IF NOT EXISTS role_weights (
+    role_id TEXT PRIMARY KEY,
+    weight INTEGER DEFAULT 1
+)`);
+
   db.run(`CREATE TABLE IF NOT EXISTS trusted_roles (
     role_id TEXT PRIMARY KEY
   )`);
@@ -101,6 +124,59 @@ async function syncFactionsWithDB(guild) {
   console.log("✅ Faction roles synced with database");
 }
 
+// ================== RESOLUTION HELPERS ==================
+
+async function getUserVoteWeight(member) {
+    let maxWeight = 1; // default
+    for (const role of member.roles.cache.values()) {
+        const row = await new Promise(resolve => {
+            db.get("SELECT weight FROM role_weights WHERE role_id = ?", [role.id], (err, r) => resolve(r));
+        });
+        if (row && row.weight > maxWeight) maxWeight = row.weight;
+    }
+    return maxWeight;
+}
+
+async function updateResolutionEmbed(channel, messageId, resolutionId) {
+    const res = await new Promise(resolve => {
+        db.get("SELECT * FROM resolutions WHERE id = ?", [resolutionId], (err, r) => resolve(r));
+    });
+    if (!res) return;
+
+    const votes = await new Promise(resolve => {
+        db.all("SELECT vote, SUM(weight) as total FROM resolution_votes WHERE resolution_id = ? GROUP BY vote", [resolutionId], (err, rows) => resolve(rows || []));
+    });
+
+    let yes = 0, no = 0;
+    for (const v of votes) {
+        if (v.vote === "Yes") yes = v.total;
+        if (v.vote === "No") no = v.total;
+    }
+
+    const vetoRole = res.veto_role_id ? `<@&${res.veto_role_id}>` : "None";
+
+    const embed = new Discord.EmbedBuilder()
+        .setColor(res.status === "Vetoed" ? 0xff0000 : 0x1d90f5)
+        .setTitle(`📜 Resolution #${res.id}: ${res.title}`)
+        .setDescription(res.description)
+        .addFields(
+            { name: "Status", value: res.status, inline: true },
+            { name: "Votes For ✅", value: `${yes}`, inline: true },
+            { name: "Votes Against ❌", value: `${no}`, inline: true },
+            { name: "Veto Role 🛑", value: vetoRole, inline: true }
+        )
+        .setFooter({ text: "Union of Nations • Official Voting" });
+
+    const row = new Discord.ActionRowBuilder().addComponents(
+        new Discord.ButtonBuilder().setCustomId(`vote_yes_${res.id}`).setLabel("✅ Vote For").setStyle(Discord.ButtonStyle.Success),
+        new Discord.ButtonBuilder().setCustomId(`vote_no_${res.id}`).setLabel("❌ Vote Against").setStyle(Discord.ButtonStyle.Danger),
+        new Discord.ButtonBuilder().setCustomId(`veto_${res.id}`).setLabel("🛑 Veto").setStyle(Discord.ButtonStyle.Secondary)
+    );
+
+    const msg = await channel.messages.fetch(messageId);
+    await msg.edit({ embeds: [embed], components: [row] });
+}
+
 // ================= BOT READY =================
 client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
@@ -149,6 +225,21 @@ client.once("ready", async () => {
       .setName("weekly-reset")
       .setDescription("Reset faction points weekly")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+// Create a resolution
+new SlashCommandBuilder()
+    .setName("resolution-create")
+    .setDescription("Create a new UN resolution")
+    .addStringOption(o => o.setName("title").setDescription("Resolution title").setRequired(true))
+    .addStringOption(o => o.setName("description").setDescription("Resolution description").setRequired(true))
+    .addRoleOption(o => o.setName("veto_role").setDescription("Role that can veto (optional)").setRequired(false)),
+
+// Set role weight
+new SlashCommandBuilder()
+    .setName("role-weight-set")
+    .setDescription("Set vote weight for a role (Admin only)")
+    .addRoleOption(o => o.setName("role").setDescription("Role to set weight for").setRequired(true))
+    .addIntegerOption(o => o.setName("weight").setDescription("Vote weight").setRequired(true)),
 
     new SlashCommandBuilder()
       .setName("war-declare")
@@ -242,6 +333,84 @@ client.on("interactionCreate", async interaction => {
 
   const userId = interaction.user.id;
   const today = new Date().toDateString();
+
+// ================== RESOLUTION COMMANDS ==================
+if (interaction.commandName === "resolution-create") {
+    const title = interaction.options.getString("title");
+    const description = interaction.options.getString("description");
+    const vetoRole = interaction.options.getRole("veto_role");
+
+    db.run("INSERT INTO resolutions (title, description, creator_id, veto_role_id) VALUES (?, ?, ?, ?)",
+        [title, description, interaction.user.id, vetoRole ? vetoRole.id : null], async function(err) {
+            if (err) return interaction.reply({ content: "❌ Failed to create resolution", ephemeral: true });
+
+            const resolutionId = this.lastID;
+
+            const embed = new Discord.EmbedBuilder()
+                .setColor(0x1d90f5)
+                .setTitle(`📜 Resolution #${resolutionId}: ${title}`)
+                .setDescription(description)
+                .addFields(
+                    { name: "Status", value: "Pending", inline: true },
+                    { name: "Votes For ✅", value: "0", inline: true },
+                    { name: "Votes Against ❌", value: "0", inline: true },
+                    { name: "Veto Role 🛑", value: vetoRole ? `<@&${vetoRole.id}>` : "None", inline: true }
+                )
+                .setFooter({ text: "Union of Nations • Official Voting" });
+
+            const row = new Discord.ActionRowBuilder().addComponents(
+                new Discord.ButtonBuilder().setCustomId(`vote_yes_${resolutionId}`).setLabel("✅ Vote For").setStyle(Discord.ButtonStyle.Success),
+                new Discord.ButtonBuilder().setCustomId(`vote_no_${resolutionId}`).setLabel("❌ Vote Against").setStyle(Discord.ButtonStyle.Danger),
+                new Discord.ButtonBuilder().setCustomId(`veto_${resolutionId}`).setLabel("🛑 Veto").setStyle(Discord.ButtonStyle.Secondary)
+            );
+
+            await interaction.channel.send({ embeds: [embed], components: [row] });
+            interaction.reply({ content: `✅ Resolution created: #${resolutionId}`, ephemeral: true });
+        });
+}
+
+else if (interaction.commandName === "role-weight-set") {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) return interaction.reply({ content: "❌ Admin only", ephemeral: true });
+
+    const role = interaction.options.getRole("role");
+    const weight = interaction.options.getInteger("weight");
+
+    db.run("INSERT OR REPLACE INTO role_weights (role_id, weight) VALUES (?, ?)", [role.id, weight]);
+    interaction.reply({ content: `✅ Role weight set: ${role.name} = ${weight}`, ephemeral: true });
+}
+
+client.on("interactionCreate", async interaction => {
+    if (!interaction.isButton()) return;
+
+    const [action, , id] = interaction.customId.split("_"); // vote_yes_1 -> ['vote','yes','1']
+    const resolutionId = parseInt(id);
+    const member = interaction.member;
+
+    // Fetch resolution
+    const res = await new Promise(resolve => db.get("SELECT * FROM resolutions WHERE id = ?", [resolutionId], (err, r) => resolve(r)));
+    if (!res) return interaction.reply({ content: "❌ Resolution not found", ephemeral: true });
+    if (res.status !== "Pending") return interaction.reply({ content: "⚠️ Voting closed", ephemeral: true });
+
+    const userWeight = await getUserVoteWeight(member);
+
+    if (action === "vote") {
+        const voteType = interaction.customId.split("_")[1] === "yes" ? "Yes" : "No";
+        db.run("INSERT OR REPLACE INTO resolution_votes (resolution_id, user_id, vote, weight) VALUES (?, ?, ?, ?)",
+            [resolutionId, member.id, voteType, userWeight]);
+        await updateResolutionEmbed(interaction.channel, interaction.message.id, resolutionId);
+        return interaction.reply({ content: `✅ Your vote (${voteType}) has been recorded with weight ${userWeight}`, ephemeral: true });
+    }
+
+    else if (action === "veto") {
+        if (!res.veto_role_id || !member.roles.cache.has(res.veto_role_id)) {
+            return interaction.reply({ content: "❌ You do not have veto permission", ephemeral: true });
+        }
+
+        db.run("UPDATE resolutions SET status = 'Vetoed' WHERE id = ?", [resolutionId]);
+        await updateResolutionEmbed(interaction.channel, interaction.message.id, resolutionId);
+        return interaction.reply({ content: "🛑 Resolution has been vetoed!", ephemeral: true });
+    }
+});
 
   try {
     // ===== CORE COMMANDS =====
@@ -507,6 +676,7 @@ else if (interaction.commandName === "urgentdm") {
 
 // ================= LOGIN =================
 client.login(config.token);
+
 
 
 
