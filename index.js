@@ -334,74 +334,75 @@ client.on("interactionCreate", async interaction => {
   const userId = interaction.user.id;
   const today = new Date().toDateString();
 
-  // ================== RESOLUTION COMMANDS ==================
-  if (interaction.commandName === "resolution-create") {
-    const title = interaction.options.getString("title");
-    const description = interaction.options.getString("description");
-    const vetoRole = interaction.options.getRole("veto_role");
-
-    // Tell Discord we're working (prevents "application didn't respond")
-    await interaction.deferReply({ ephemeral: true });
-
-    db.run(
-      "INSERT INTO resolutions (title, description, creator_id, veto_role_id) VALUES (?, ?, ?, ?)",
-      [title, description, interaction.user.id, vetoRole ? vetoRole.id : null],
-      async function (err) {
-        if (err) {
-          console.error(err);
-          return interaction.editReply("❌ Failed to create resolution");
-        }
-
-        const resolutionId = this.lastID;
-
-        const embed = new EmbedBuilder()
-          .setColor(0x1d90f5)
-          .setTitle(`📜 Resolution #${resolutionId}: ${title}`)
-          .setDescription(description)
-          .addFields(
-            { name: "Status", value: "Pending", inline: true },
-            { name: "Votes For ✅", value: "0", inline: true },
-            { name: "Votes Against ❌", value: "0", inline: true },
-            {
-              name: "Veto Role 🛑",
-              value: vetoRole ? `<@&${vetoRole.id}>` : "None",
-              inline: true
-            }
-          )
-          .setFooter({ text: "Union of Nations • Official Voting" });
-
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`vote_yes_${resolutionId}`)
-            .setLabel("✅ Vote For")
-            .setStyle(ButtonStyle.Success),
-
-          new ButtonBuilder()
-            .setCustomId(`vote_no_${resolutionId}`)
-            .setLabel("❌ Vote Against")
-            .setStyle(ButtonStyle.Danger),
-
-          new ButtonBuilder()
-            .setCustomId(`veto_${resolutionId}`)
-            .setLabel("🛑 Veto")
-            .setStyle(ButtonStyle.Secondary)
-        );
-
-        await interaction.channel.send({
-          embeds: [embed],
-          components: [row]
-        });
-
-        await interaction.editReply(`✅ Resolution created: #${resolutionId}`);
-      }
-    );
-  }
-
-}
-
   try {
-    // ===== CORE COMMANDS =====
-    if (interaction.commandName === "faction-create") {
+
+    // ================== RESOLUTION CREATE ==================
+    if (interaction.commandName === "resolution-create") {
+      const title = interaction.options.getString("title");
+      const description = interaction.options.getString("description");
+      const vetoRole = interaction.options.getRole("veto_role");
+
+      await interaction.deferReply({ ephemeral: true });
+
+      db.run(
+        "INSERT INTO resolutions (title, description, creator_id, veto_role_id) VALUES (?, ?, ?, ?)",
+        [
+          title,
+          description,
+          interaction.user.id,
+          vetoRole ? vetoRole.id : null
+        ],
+        async function (err) {
+          if (err) {
+            console.error(err);
+            return interaction.editReply("❌ Failed to create resolution");
+          }
+
+          const resolutionId = this.lastID;
+
+          const embed = new EmbedBuilder()
+            .setColor(0x1d90f5)
+            .setTitle(`📜 Resolution #${resolutionId}: ${title}`)
+            .setDescription(description)
+            .addFields(
+              { name: "Status", value: "Pending", inline: true },
+              { name: "Votes For ✅", value: "0", inline: true },
+              { name: "Votes Against ❌", value: "0", inline: true },
+              {
+                name: "Veto Role 🛑",
+                value: vetoRole ? `<@&${vetoRole.id}>` : "None",
+                inline: true
+              }
+            )
+            .setFooter({ text: "Union of Nations • Official Voting" });
+
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`vote_yes_${resolutionId}`)
+              .setLabel("✅ Vote For")
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`vote_no_${resolutionId}`)
+              .setLabel("❌ Vote Against")
+              .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+              .setCustomId(`veto_${resolutionId}`)
+              .setLabel("🛑 Veto")
+              .setStyle(ButtonStyle.Secondary)
+          );
+
+          await interaction.channel.send({
+            embeds: [embed],
+            components: [row]
+          });
+
+          await interaction.editReply(`✅ Resolution created: #${resolutionId}`);
+        }
+      );
+    }
+
+    // ================= CORE COMMANDS =================
+    else if (interaction.commandName === "faction-create") {
       const name = interaction.options.getString("name");
       db.run("INSERT INTO factions (name) VALUES (?)", [name], async err => {
         if (err) return interaction.reply({ content: "❌ Faction already exists", ephemeral: true });
@@ -409,6 +410,7 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`✅ Faction **${name}** created`);
       });
     }
+
     else if (interaction.commandName === "faction-delete") {
       const name = interaction.options.getString("name");
       await deleteFactionStructure(interaction.guild, name);
@@ -416,6 +418,7 @@ client.on("interactionCreate", async interaction => {
       db.run("UPDATE users SET faction = NULL WHERE faction = ?", [name]);
       interaction.reply(`🗑️ **${name}** deleted`);
     }
+
     else if (interaction.commandName === "faction-join") {
       const name = interaction.options.getString("name");
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
@@ -428,6 +431,7 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`✅ Joined **${name}**`);
       });
     }
+
     else if (interaction.commandName === "faction-leave") {
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
         if (!u || !u.faction) return interaction.reply("❌ Not in a faction");
@@ -437,12 +441,14 @@ client.on("interactionCreate", async interaction => {
         interaction.reply("✅ Left your faction");
       });
     }
+
     else if (interaction.commandName === "faction-leader") {
       const user = interaction.options.getUser("user");
       const faction = interaction.options.getString("faction");
       db.run("UPDATE factions SET leader = ? WHERE name = ?", [user.id, faction]);
       interaction.reply(`👑 <@${user.id}> is now leader of **${faction}**`);
     }
+
     else if (interaction.commandName === "checkin") {
       db.get("SELECT * FROM users WHERE user_id = ?", [userId], (e, u) => {
         if (!u || !u.faction) return interaction.reply("❌ Not in a faction");
@@ -452,10 +458,12 @@ client.on("interactionCreate", async interaction => {
         interaction.reply("🔥 +10 points added to your faction");
       });
     }
+
     else if (interaction.commandName === "weekly-reset") {
       db.run("UPDATE factions SET points = 0");
       interaction.reply("♻️ Weekly reset complete");
     }
+
     else if (interaction.commandName === "leaderboard") {
       db.all("SELECT * FROM factions ORDER BY points DESC", [], (e, rows) => {
         let msg = "**🏆 Faction Leaderboard**\n\n";
@@ -463,6 +471,7 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(msg);
       });
     }
+
     else if (interaction.commandName === "war-declare") {
       const enemy = interaction.options.getString("enemy");
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], (e, u) => {
@@ -471,153 +480,56 @@ client.on("interactionCreate", async interaction => {
         interaction.reply(`⚔️ **${u.faction}** declared war on **${enemy}**`);
       });
     }
+
     else if (interaction.commandName === "help") {
-      const helpMessage = `
-**📜 Faction Bot Commands**
-
-**/faction-create [name]** – Create a new faction (Admin only)  
-**/faction-delete [name]** – Delete a faction (Admin only)  
-**/faction-join [name]** – Join a faction  
-**/faction-leave** – Leave your faction  
-**/faction-leader [user] [faction]** – Assign a faction leader (Admin only)  
-**/checkin** – Daily faction check-in  
-**/leaderboard** – View faction leaderboard  
-**/weekly-reset** – Reset all faction points (Admin only)  
-**/war-declare [enemy]** – Declare war  
-**/faction-add-member [user] [faction]** – Add member (Admin/Trusted)  
-**/faction-remove-member [user] [faction]** – Remove member (Admin/Trusted)  
-**/faction-info [faction]** – Faction details  
-**/faction-members [faction]** – List all members  
-**/trust-role [role]** – Assign trusted role (Admin only)  
-**/help** – Show this help message
-      `;
-      interaction.reply({ content: helpMessage, ephemeral: true });
+      interaction.reply({ content: "📜 Use /faction-* or /resolution-create", ephemeral: true });
     }
 
-    // ===== ADMIN/TRUSTED COMMANDS =====
-    else if (interaction.commandName === "faction-add-member") {
-      if (!(await isTrusted(interaction))) return interaction.reply("❌ You cannot use this command");
-      const user = interaction.options.getUser("user");
-      const faction = interaction.options.getString("faction");
-      db.get("SELECT faction FROM users WHERE user_id = ?", [user.id], async (e, u) => {
-        if (u && u.faction) return interaction.reply(`❌ Already in **${u.faction}**`);
-        const role = interaction.guild.roles.cache.find(r => r.name === faction);
-        if (!role) return interaction.reply("❌ Faction not found");
-        await interaction.guild.members.fetch(user.id);
-        await interaction.guild.members.cache.get(user.id).roles.add(role);
-        db.run("INSERT OR REPLACE INTO users VALUES (?, ?, ?)", [user.id, faction, ""]);
-        interaction.reply(`✅ Added <@${user.id}> to **${faction}**`);
-      });
-    }
-    else if (interaction.commandName === "faction-remove-member") {
-      if (!(await isTrusted(interaction))) return interaction.reply("❌ You cannot use this command");
-      const user = interaction.options.getUser("user");
-      const faction = interaction.options.getString("faction");
-      db.get("SELECT faction FROM users WHERE user_id = ?", [user.id], async (e, u) => {
-        if (!u || u.faction !== faction) return interaction.reply("❌ Member not in this faction");
-        const role = interaction.guild.roles.cache.find(r => r.name === faction);
-        if (role) await interaction.guild.members.fetch(user.id).then(m => m.roles.remove(role));
-        db.run("UPDATE users SET faction = NULL WHERE user_id = ?", [user.id]);
-        interaction.reply(`🗑️ Removed <@${user.id}> from **${faction}**`);
-      });
-    }
-    else if (interaction.commandName === "faction-info") {
-      const faction = interaction.options.getString("faction");
-      db.get("SELECT * FROM factions WHERE name = ?", [faction], (e, f) => {
-        if (!f) return interaction.reply("❌ Faction not found");
-        db.all("SELECT user_id FROM users WHERE faction = ?", [faction], (err, members) => {
-          interaction.reply(`
-**Faction:** ${f.name}
-**Leader:** ${f.leader ? `<@${f.leader}>` : "None"}
-**Points:** ${f.points}
-**Members:** ${members.length}
-          `);
-        });
-      });
-    }
-    else if (interaction.commandName === "faction-members") {
-      const faction = interaction.options.getString("faction");
-      db.all("SELECT user_id FROM users WHERE faction = ?", [faction], (err, members) => {
-        if (!members || members.length === 0) return interaction.reply("❌ No members found");
-        interaction.reply(`**Members of ${faction}:**\n${members.map(m => `<@${m.user_id}>`).join("\n")}`);
-      });
-    }
     else if (interaction.commandName === "trust-role") {
       const role = interaction.options.getRole("role");
       db.run("INSERT OR REPLACE INTO trusted_roles VALUES (?)", [role.id]);
       interaction.reply(`✅ Role **${role.name}** is now trusted`);
     }
-else if (interaction.commandName === "dm") {
-  const message = interaction.options.getString("message");
-  const user = interaction.options.getUser("user");
-  const role = interaction.options.getRole("role");
 
-  // Make sure user OR role is selected
-  if (!user && !role) {
-    return interaction.reply({
-      content: "❌ You must select **either a user or a role**.",
-      ephemeral: true
-    });
-  }
+    else if (interaction.commandName === "dm") {
+      const message = interaction.options.getString("message");
+      const user = interaction.options.getUser("user");
+      const role = interaction.options.getRole("role");
 
-  if (user && role) {
-    return interaction.reply({
-      content: "❌ Choose **only one**: user OR role.",
-      ephemeral: true
-    });
-  }
+      if (!user && !role) {
+        return interaction.reply({ content: "❌ Select a user or a role", ephemeral: true });
+      }
 
-  let sent = 0;
+      let sent = 0;
+      if (user) {
+        await user.send(message);
+        sent = 1;
+      }
 
-  try {
-    if (user) {
-      await user.send(message);
-      sent = 1;
-    }
-
-    if (role) {
-      const members = await interaction.guild.members.fetch();
-
-      for (const member of members.values()) {
-        if (member.roles.cache.has(role.id) && !member.user.bot) {
-          try {
-            await member.user.send(message);
-            sent++;
-          } catch {}
+      if (role) {
+        const members = await interaction.guild.members.fetch();
+        for (const m of members.values()) {
+          if (m.roles.cache.has(role.id) && !m.user.bot) {
+            try {
+              await m.user.send(message);
+              sent++;
+            } catch {}
+          }
         }
       }
+
+      interaction.reply({ content: `✅ DM sent to ${sent} recipient(s)`, ephemeral: true });
     }
 
-    return interaction.reply({
-      content: `✅ DM sent to **${sent}** recipient(s).`,
-      ephemeral: true
-    });
-
-  } catch (err) {
-    console.error(err);
-    return interaction.reply({
-      content: "❌ Failed to send DM(s).",
-      ephemeral: true
-    });
-  }
-}
-else if (interaction.commandName === "urgentdm") {
+    else if (interaction.commandName === "urgentdm") {
       if (!(await isTrusted(interaction))) {
-        return interaction.reply({
-          content: "❌ You are not allowed to send urgent UN messages.",
-          ephemeral: true
-        });
+        return interaction.reply({ content: "❌ Not authorized", ephemeral: true });
       }
 
       const subject = interaction.options.getString("subject");
       const ministry = interaction.options.getString("ministry");
       const message = interaction.options.getString("message");
       const role = interaction.options.getRole("role");
-
-      await interaction.reply({
-        content: "📨 Sending urgent messages...",
-        ephemeral: true
-      });
 
       const embed = {
         color: 0xff0000,
@@ -627,42 +539,30 @@ else if (interaction.commandName === "urgentdm") {
           { name: "Ministry", value: ministry },
           { name: "Message", value: message }
         ],
-        footer: {
-          text: "Union of Nations (UN) • Official Communication"
-        }
+        footer: { text: "Union of Nations • Official Communication" }
       };
 
-      let sent = 0;
-      let failed = 0;
-
       const members = await interaction.guild.members.fetch();
-
-      for (const member of members.values()) {
-        if (member.user.bot) continue;
-        if (role && !member.roles.cache.has(role.id)) continue;
-
-        try {
-          await member.send({ embeds: [embed] });
-          sent++;
-        } catch {
-          failed++;
-        }
+      for (const m of members.values()) {
+        if (m.user.bot) continue;
+        if (role && !m.roles.cache.has(role.id)) continue;
+        try { await m.send({ embeds: [embed] }); } catch {}
       }
 
-      await interaction.followUp({
-        content: `✅ Done.\n📨 Sent: ${sent}\n❌ Failed: ${failed}`,
-        ephemeral: true
-      });
+      interaction.reply({ content: "✅ Urgent messages sent", ephemeral: true });
     }
 
   } catch (err) {
     console.error("Error handling interaction:", err);
-    interaction.reply({ content: "❌ Something went wrong", ephemeral: true });
+    if (!interaction.replied) {
+      interaction.reply({ content: "❌ Something went wrong", ephemeral: true });
+    }
   }
 });
 
 // ================= LOGIN =================
 client.login(config.token);
+
 
 
 
