@@ -334,48 +334,69 @@ client.on("interactionCreate", async interaction => {
   const userId = interaction.user.id;
   const today = new Date().toDateString();
 
-// ================== RESOLUTION COMMANDS ==================
-else if (interaction.commandName === "resolution-create") {
-  const title = interaction.options.getString("title");
-  const description = interaction.options.getString("description");
-  const vetoRole = interaction.options.getRole("veto_role");
+  // ================== RESOLUTION COMMANDS ==================
+  if (interaction.commandName === "resolution-create") {
+    const title = interaction.options.getString("title");
+    const description = interaction.options.getString("description");
+    const vetoRole = interaction.options.getRole("veto_role");
 
-  // Immediately defer reply so Discord knows we're processing
-  await interaction.deferReply({ ephemeral: true });
+    // Tell Discord we're working (prevents "application didn't respond")
+    await interaction.deferReply({ ephemeral: true });
 
-  db.run(
-    "INSERT INTO resolutions (title, description, creator_id, veto_role_id) VALUES (?, ?, ?, ?)",
-    [title, description, interaction.user.id, vetoRole ? vetoRole.id : null],
-    async function(err) {
-      if (err) return interaction.editReply({ content: "❌ Failed to create resolution" });
+    db.run(
+      "INSERT INTO resolutions (title, description, creator_id, veto_role_id) VALUES (?, ?, ?, ?)",
+      [title, description, interaction.user.id, vetoRole ? vetoRole.id : null],
+      async function (err) {
+        if (err) {
+          console.error(err);
+          return interaction.editReply("❌ Failed to create resolution");
+        }
 
-      const resolutionId = this.lastID;
+        const resolutionId = this.lastID;
 
-      const embed = new EmbedBuilder()
-        .setColor(0x1d90f5)
-        .setTitle(`📜 Resolution #${resolutionId}: ${title}`)
-        .setDescription(description)
-        .addFields(
-          { name: "Status", value: "Pending", inline: true },
-          { name: "Votes For ✅", value: "0", inline: true },
-          { name: "Votes Against ❌", value: "0", inline: true },
-          { name: "Veto Role 🛑", value: vetoRole ? `<@&${vetoRole.id}>` : "None", inline: true }
-        )
-        .setFooter({ text: "Union of Nations • Official Voting" });
+        const embed = new EmbedBuilder()
+          .setColor(0x1d90f5)
+          .setTitle(`📜 Resolution #${resolutionId}: ${title}`)
+          .setDescription(description)
+          .addFields(
+            { name: "Status", value: "Pending", inline: true },
+            { name: "Votes For ✅", value: "0", inline: true },
+            { name: "Votes Against ❌", value: "0", inline: true },
+            {
+              name: "Veto Role 🛑",
+              value: vetoRole ? `<@&${vetoRole.id}>` : "None",
+              inline: true
+            }
+          )
+          .setFooter({ text: "Union of Nations • Official Voting" });
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`vote_yes_${resolutionId}`).setLabel("✅ Vote For").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`vote_no_${resolutionId}`).setLabel("❌ Vote Against").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId(`veto_${resolutionId}`).setLabel("🛑 Veto").setStyle(ButtonStyle.Secondary)
-      );
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`vote_yes_${resolutionId}`)
+            .setLabel("✅ Vote For")
+            .setStyle(ButtonStyle.Success),
 
-      // Send the resolution embed to the channel
-      await interaction.channel.send({ embeds: [embed], components: [row] });
+          new ButtonBuilder()
+            .setCustomId(`vote_no_${resolutionId}`)
+            .setLabel("❌ Vote Against")
+            .setStyle(ButtonStyle.Danger),
 
-      // Confirm to the command user
-      await interaction.editReply({ content: `✅ Resolution created: #${resolutionId}` });
-    }
-  );
+          new ButtonBuilder()
+            .setCustomId(`veto_${resolutionId}`)
+            .setLabel("🛑 Veto")
+            .setStyle(ButtonStyle.Secondary)
+        );
+
+        await interaction.channel.send({
+          embeds: [embed],
+          components: [row]
+        });
+
+        await interaction.editReply(`✅ Resolution created: #${resolutionId}`);
+      }
+    );
+  }
+
 }
 
   try {
