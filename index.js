@@ -7,24 +7,6 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
-const axios = require("axios");
-
-async function getNationInfo(nationName) {
-  try {
-    const apiKey = process.env.PNW_API_KEY;
-    const url = `https://politicsandwar.com/api/nation/id=${encodeURIComponent(nationName)}&key=${apiKey}`;
-    const res = await axios.get(url);
-
-    if (res.data && res.data.nation) {
-      return res.data.nation; // this contains nation info
-    } else {
-      return null;
-    }
-  } catch (err) {
-    console.error("Error fetching nation info:", err);
-    return null;
-  }
-}
 
 // ================= CONFIG =================
 const client = new Client({
@@ -147,15 +129,6 @@ client.once("ready", async () => {
     new SlashCommandBuilder()
       .setName("faction-leave")
       .setDescription("Leave your faction"),
-
-new SlashCommandBuilder()
-  .setName("nation")
-  .setDescription("Get information about a PnW nation")
-  .addStringOption(o =>
-    o.setName("name")
-     .setDescription("Name of the nation")
-     .setRequired(true)
-  ),
 
     new SlashCommandBuilder()
       .setName("faction-leader")
@@ -287,32 +260,6 @@ client.on("interactionCreate", async interaction => {
       db.run("UPDATE users SET faction = NULL WHERE faction = ?", [name]);
       interaction.reply(`🗑️ **${name}** deleted`);
     }
-else if (interaction.commandName === "nation") {
-  const name = interaction.options.getString("name");
-
-  await interaction.deferReply(); // in case API is slow
-
-  const nation = await getNationInfo(name);
-
-  if (!nation) {
-    return interaction.followUp(`❌ Nation **${name}** not found or API error`);
-  }
-
-  const embed = {
-    color: 0x00ff00,
-    title: `🌐 ${nation.name}`,
-    fields: [
-      { name: "Population", value: nation.population.toLocaleString(), inline: true },
-      { name: "GDP", value: `$${nation.gdp.toLocaleString()}`, inline: true },
-      { name: "Treasury", value: `$${nation.treasury.toLocaleString()}`, inline: true },
-      { name: "Military Score", value: nation.military_score.toLocaleString(), inline: true },
-      { name: "Alliances", value: nation.alliances.join(", ") || "None", inline: false }
-    ],
-    footer: { text: "Data from Politics & War API" }
-  };
-
-  interaction.followUp({ embeds: [embed] });
-}
     else if (interaction.commandName === "faction-join") {
       const name = interaction.options.getString("name");
       db.get("SELECT faction FROM users WHERE user_id = ?", [userId], async (e, u) => {
@@ -560,7 +507,6 @@ else if (interaction.commandName === "urgentdm") {
 
 // ================= LOGIN =================
 client.login(config.token);
-
 
 
 
